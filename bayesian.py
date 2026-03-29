@@ -1,69 +1,58 @@
 #!/usr/bin/env python3
-"""bayesian - Bayesian inference with conjugate priors."""
-import sys, math
+"""Bayesian inference utilities. Zero dependencies."""
 
 def bayes_theorem(prior, likelihood, evidence):
-    return prior * likelihood / evidence if evidence > 0 else 0.0
+    return prior * likelihood / evidence if evidence > 0 else 0
 
-class BetaBinomial:
-    """Beta-Binomial conjugate prior for coin flips."""
-    def __init__(self, alpha=1.0, beta=1.0):
-        self.alpha = alpha
-        self.beta = beta
-    def update(self, successes, failures):
-        self.alpha += successes
-        self.beta += failures
-    def mean(self):
-        return self.alpha / (self.alpha + self.beta)
-    def mode(self):
-        if self.alpha > 1 and self.beta > 1:
-            return (self.alpha - 1) / (self.alpha + self.beta - 2)
-        return self.mean()
-    def variance(self):
-        a, b = self.alpha, self.beta
-        return (a * b) / ((a + b)**2 * (a + b + 1))
-    def credible_interval(self, level=0.95):
-        # approximate using normal
-        m = self.mean()
-        s = math.sqrt(self.variance())
-        z = 1.96 if abs(level - 0.95) < 0.01 else 2.576
-        return max(0, m - z*s), min(1, m + z*s)
+def bayes_update(prior, likelihood_true, likelihood_false):
+    evidence = prior * likelihood_true + (1 - prior) * likelihood_false
+    return bayes_theorem(prior, likelihood_true, evidence)
 
-class NormalNormal:
-    """Normal-Normal conjugate prior."""
-    def __init__(self, mu0=0, sigma0=1):
-        self.mu = mu0
-        self.sigma = sigma0
-    def update(self, data, data_sigma):
-        n = len(data)
-        data_mean = sum(data) / n
-        precision0 = 1 / self.sigma**2
-        precision_data = n / data_sigma**2
-        new_precision = precision0 + precision_data
-        self.mu = (precision0 * self.mu + precision_data * data_mean) / new_precision
-        self.sigma = math.sqrt(1 / new_precision)
+class NaiveBayesClassifier:
+    def __init__(self, alpha=1.0):
+        self.alpha = alpha; self.class_counts = {}
+        self.feature_counts = {}; self.total = 0
 
-def test():
-    # Bayes theorem: disease test
-    # P(disease) = 0.01, P(+|disease) = 0.99, P(+|no disease) = 0.05
-    p_pos = 0.01 * 0.99 + 0.99 * 0.05
-    p_disease_given_pos = bayes_theorem(0.01, 0.99, p_pos)
-    assert abs(p_disease_given_pos - 0.1667) < 0.01
-    # Beta-Binomial
-    bb = BetaBinomial(1, 1)  # uniform prior
-    bb.update(7, 3)  # 7 heads, 3 tails
-    assert abs(bb.mean() - 8/12) < 0.01
-    lo, hi = bb.credible_interval()
-    assert lo < bb.mean() < hi
-    # Normal-Normal
-    nn = NormalNormal(0, 10)  # vague prior
-    nn.update([5, 6, 4, 5, 5], 1)
-    assert abs(nn.mu - 5.0) < 0.1
-    assert nn.sigma < 10  # posterior should be tighter
-    print("OK: bayesian")
+    def fit(self, X, y):
+        self.total = len(y)
+        vocab = set()
+        for xi in X:
+            for f in xi: vocab.add(f)
+        self.vocab_size = len(vocab)
+        for xi, yi in zip(X, y):
+            self.class_counts[yi] = self.class_counts.get(yi, 0) + 1
+            if yi not in self.feature_counts: self.feature_counts[yi] = {}
+            for f in xi:
+                self.feature_counts[yi][f] = self.feature_counts[yi].get(f, 0) + 1
+        return self
+
+    def predict(self, features):
+        import math
+        best_class = None; best_score = float("-inf")
+        for c in self.class_counts:
+            score = math.log(self.class_counts[c] / self.total)
+            total_features = sum(self.feature_counts[c].values())
+            for f in features:
+                count = self.feature_counts[c].get(f, 0)
+                score += math.log((count + self.alpha) / (total_features + self.alpha * self.vocab_size))
+            if score > best_score: best_score = score; best_class = c
+        return best_class
+
+def beta_posterior(prior_a, prior_b, successes, failures):
+    return prior_a + successes, prior_b + failures
+
+def beta_mean(a, b):
+    return a / (a + b)
+
+def credible_interval(a, b, level=0.95):
+    """Approximate credible interval using normal approximation."""
+    import math
+    mean = a / (a + b)
+    var = (a * b) / ((a + b)**2 * (a + b + 1))
+    z = 1.96 if level == 0.95 else 2.576
+    return (mean - z * math.sqrt(var), mean + z * math.sqrt(var))
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1 and sys.argv[1] == "test":
-        test()
-    else:
-        print("Usage: bayesian.py test")
+    # Medical test: P(disease|positive)
+    p = bayes_update(prior=0.01, likelihood_true=0.95, likelihood_false=0.05)
+    print(f"P(disease|positive): {p:.4f}")
