@@ -1,64 +1,69 @@
 #!/usr/bin/env python3
-"""bayesian - Bayesian inference and probability calculator."""
-import argparse, math, json
+"""bayesian - Bayesian inference with conjugate priors."""
+import sys, math
 
-def bayes(prior, likelihood, evidence):
-    return prior * likelihood / evidence
+def bayes_theorem(prior, likelihood, evidence):
+    return prior * likelihood / evidence if evidence > 0 else 0.0
 
-def bayes_table(hypotheses, priors, likelihoods):
-    evidence = sum(p * l for p, l in zip(priors, likelihoods))
-    posteriors = [bayes(p, l, evidence) for p, l in zip(priors, likelihoods)]
-    return posteriors, evidence
+class BetaBinomial:
+    """Beta-Binomial conjugate prior for coin flips."""
+    def __init__(self, alpha=1.0, beta=1.0):
+        self.alpha = alpha
+        self.beta = beta
+    def update(self, successes, failures):
+        self.alpha += successes
+        self.beta += failures
+    def mean(self):
+        return self.alpha / (self.alpha + self.beta)
+    def mode(self):
+        if self.alpha > 1 and self.beta > 1:
+            return (self.alpha - 1) / (self.alpha + self.beta - 2)
+        return self.mean()
+    def variance(self):
+        a, b = self.alpha, self.beta
+        return (a * b) / ((a + b)**2 * (a + b + 1))
+    def credible_interval(self, level=0.95):
+        # approximate using normal
+        m = self.mean()
+        s = math.sqrt(self.variance())
+        z = 1.96 if abs(level - 0.95) < 0.01 else 2.576
+        return max(0, m - z*s), min(1, m + z*s)
 
-def beta_distribution(alpha, beta_param, x):
-    from math import gamma as gamma_fn
-    B = gamma_fn(alpha) * gamma_fn(beta_param) / gamma_fn(alpha + beta_param)
-    return x**(alpha-1) * (1-x)**(beta_param-1) / B
+class NormalNormal:
+    """Normal-Normal conjugate prior."""
+    def __init__(self, mu0=0, sigma0=1):
+        self.mu = mu0
+        self.sigma = sigma0
+    def update(self, data, data_sigma):
+        n = len(data)
+        data_mean = sum(data) / n
+        precision0 = 1 / self.sigma**2
+        precision_data = n / data_sigma**2
+        new_precision = precision0 + precision_data
+        self.mu = (precision0 * self.mu + precision_data * data_mean) / new_precision
+        self.sigma = math.sqrt(1 / new_precision)
 
-def naive_bayes_classify(features, classes, training_data):
-    best_class, best_prob = None, -1
-    for cls in classes:
-        cls_data = [d for d in training_data if d[-1] == cls]
-        prior = len(cls_data) / len(training_data)
-        likelihood = prior
-        for i, f in enumerate(features):
-            matches = sum(1 for d in cls_data if d[i] == f)
-            likelihood *= (matches + 1) / (len(cls_data) + 2)  # Laplace smoothing
-        if likelihood > best_prob:
-            best_prob = likelihood; best_class = cls
-    return best_class, best_prob
-
-def main():
-    p = argparse.ArgumentParser(description="Bayesian inference")
-    sub = p.add_subparsers(dest="cmd")
-    b = sub.add_parser("bayes"); b.add_argument("--prior", type=float, required=True)
-    b.add_argument("--likelihood", type=float, required=True)
-    b.add_argument("--evidence", type=float)
-    b.add_argument("--false-positive", type=float)
-    t = sub.add_parser("table"); t.add_argument("--hypotheses", nargs="+", required=True)
-    t.add_argument("--priors", nargs="+", type=float, required=True)
-    t.add_argument("--likelihoods", nargs="+", type=float, required=True)
-    d = sub.add_parser("demo")
-    args = p.parse_args()
-    if args.cmd == "bayes":
-        if args.evidence:
-            post = bayes(args.prior, args.likelihood, args.evidence)
-        elif args.false_positive is not None:
-            evidence = args.prior * args.likelihood + (1-args.prior) * args.false_positive
-            post = bayes(args.prior, args.likelihood, evidence)
-        else:
-            print("Need --evidence or --false-positive"); return
-        print(f"Posterior: {post:.6f}")
-    elif args.cmd == "table":
-        posteriors, evidence = bayes_table(args.hypotheses, args.priors, args.likelihoods)
-        print(f"Evidence: {evidence:.6f}")
-        for h, pr, l, po in zip(args.hypotheses, args.priors, args.likelihoods, posteriors):
-            print(f"  {h}: prior={pr:.4f} likelihood={l:.4f} posterior={po:.4f}")
-    elif args.cmd == "demo":
-        print("Medical test (1% disease prevalence, 99% sensitivity, 5% false positive):")
-        evidence = 0.01*0.99 + 0.99*0.05
-        post = bayes(0.01, 0.99, evidence)
-        print(f"  P(disease|positive) = {post:.4f} ({post*100:.1f}%)")
+def test():
+    # Bayes theorem: disease test
+    # P(disease) = 0.01, P(+|disease) = 0.99, P(+|no disease) = 0.05
+    p_pos = 0.01 * 0.99 + 0.99 * 0.05
+    p_disease_given_pos = bayes_theorem(0.01, 0.99, p_pos)
+    assert abs(p_disease_given_pos - 0.1667) < 0.01
+    # Beta-Binomial
+    bb = BetaBinomial(1, 1)  # uniform prior
+    bb.update(7, 3)  # 7 heads, 3 tails
+    assert abs(bb.mean() - 8/12) < 0.01
+    lo, hi = bb.credible_interval()
+    assert lo < bb.mean() < hi
+    # Normal-Normal
+    nn = NormalNormal(0, 10)  # vague prior
+    nn.update([5, 6, 4, 5, 5], 1)
+    assert abs(nn.mu - 5.0) < 0.1
+    assert nn.sigma < 10  # posterior should be tighter
+    print("OK: bayesian")
 
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) > 1 and sys.argv[1] == "test":
+        test()
+    else:
+        print("Usage: bayesian.py test")

@@ -1,11 +1,11 @@
 # bayesian
 
-Bayesian inference calculator.
-
-Zero dependencies. Python 3.8+.
+Bayesian inference with conjugate priors.
 
 ## Usage
 
 ```bash
-python3 bayesian.py --help
+python3 bayesian.py test
 ```
+
+Zero dependencies. Python 3.8+.
